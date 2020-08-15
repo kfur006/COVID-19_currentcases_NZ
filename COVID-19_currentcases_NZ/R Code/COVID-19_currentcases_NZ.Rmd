@@ -1,0 +1,57 @@
+---
+title: "COVID-19_currentcases_NZ"
+author: "Power In Numbers"
+date: "8/15/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+library(readxl)
+library(XML)
+library(RCurl)
+```
+
+
+# Data Load
+Daily cases data is from
+* https://www.health.govt.nz/system/files/documents/pages/covid-cases-15aug20.xlsx
+Daily test numbers data is from
+* https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-current-situation/covid-19-current-cases
+
+```{r}
+url <- "https://www.health.govt.nz/system/files/documents/pages/covid-cases-15aug20.xlsx"
+download.file(url, paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"), mode="wb")
+daily <- read_xlsx(paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"),
+                  sheet = excel_sheets(paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"))[1],
+                  skip = 2)
+readLines("https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-current-situation/covid-19-current-cases")
+readHTMLTable("https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-current-situation/covid-19-current-cases")
+?readHTMLTable
+```
+
+
+```{r}
+theurl <- "https://www.health.govt.nz/system/files/documents/pages/covid-cases-15aug20.xlsx"
+webpage <- getURL(theurl)
+webpage <- readLines(tc <- textConnection(webpage)); close(tc)
+
+pagetree <- htmlTreeParse(webpage, error=function(...){}, useInternalNodes = TRUE)
+
+# Extract table header and contents
+tablehead <- xpathSApply(pagetree, "//*/table[@class='wikitable sortable']/tr/th", xmlValue)
+results <- xpathSApply(pagetree, "//*/table[@class='wikitable sortable']/tr/td", xmlValue)
+
+# Convert character vector to dataframe
+content <- as.data.frame(matrix(results, ncol = 8, byrow = TRUE))
+
+
+```
+
