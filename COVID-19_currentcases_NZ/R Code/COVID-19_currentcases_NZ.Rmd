@@ -11,47 +11,181 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r echo = F}
 library(tidyverse)
+library(tidyr)
 library(here)
 library(readxl)
 library(XML)
 library(RCurl)
+library(rvest)
+library(magrittr)
+theme_set(theme_light())
+```
+
+```{r echo = F}
+plottheme <- theme(text=element_text(size=20))
+captionline <- "Source: Ministry of Health"
+```
+
+
+```{r echo = F}
+
+#dailyurl <- "https://www.health.govt.nz/system/files/documents/pages/covid-cases-16aug20.xlsx"
+dailyurl <- paste0("https://www.health.govt.nz/system/files/documents/pages/covid-cases-",
+                   tolower(format(as.Date(substr(Sys.time(), 1, 10)), "%d%b%y")),
+                   ".xlsx")
+
+testurl <- "https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-current-situation/covid-19-current-cases"
+
+testingratesurl <- "https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-current-situation/covid-19-current-cases/covid-19-testing-rates-ethnicity-and-dhb"
 ```
 
 
 # Data Load
 Daily cases data is from
-* https://www.health.govt.nz/system/files/documents/pages/covid-cases-15aug20.xlsx
+* `r dailyurl`
 Daily test numbers data is from
-* https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-current-situation/covid-19-current-cases
+* `r testurl`
+Test breakdown is from
+* `r testingratesurl`
 
 ```{r}
-url <- "https://www.health.govt.nz/system/files/documents/pages/covid-cases-15aug20.xlsx"
-download.file(url, paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"), mode="wb")
+download.file(dailyurl, paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"), mode="wb")
 daily <- read_xlsx(paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"),
                   sheet = excel_sheets(paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"))[1],
-                  skip = 2)
-readLines("https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-current-situation/covid-19-current-cases")
-readHTMLTable("https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-current-situation/covid-19-current-cases")
-?readHTMLTable
+                  skip = 2) %>%
+  mutate(`Date notified of potential case` = as.Date(`Date notified of potential case`)) #%>% 
+  #tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
+  #                                                      max(`Date notified of potential case`), by="day"))
+
+
+testnumber <- read_html(testurl) %>% 
+  html_nodes(., "table") %>% 
+  html_table(., fill = TRUE) %>% .[[8]] %>% 
+  filter(Date != "22 Jan – 8 Mar") %>% 
+  mutate(Date = paste0(Date, "-2020")) %>% 
+  mutate(Date = as.Date(Date, "%d-%b-%Y"))
+
+testingratecaptions <- read_html(testingratesurl) %>% 
+  html_nodes(., "table") %>% 
+  html_text(.) %>% 
+  strsplit(.,"\n\t") %>% 
+  lapply(., `[[`, 1)
+
+testingrate <- read_html(testingratesurl) %>% 
+  html_nodes(., "table") %>% 
+  html_table(., fill = TRUE)
+```
+
+# Plot for Positive Cases
+```{r}
+daily %>% count(`Date notified of potential case`, sort = T)
+daily %>% count(`Date notified of potential case`, DHB, sort = T)
+daily %>% filter(`Overseas travel` == "No") %>% 
+  count(`Date notified of potential case`, DHB, sort = T) %>% View
+
+
+daily %>% 
+  tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
+                                                        max(`Date notified of potential case`), by="day")) %>% 
+  group_by(`Date notified of potential case`) %>% 
+  summarise(n = n()) %>% 
+  ggplot(., aes(x = `Date notified of potential case`, y = n)) +
+  geom_line(size = 1) +
+  plottheme
+
+daily %>% 
+  tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
+                                                        max(`Date notified of potential case`), by="day")) %>% 
+  group_by(`Date notified of potential case`) %>% 
+  summarise(n = n()) %>% 
+  ggplot(., aes(x = `Date notified of potential case`, y = cumsum(n))) +
+  geom_line(size = 1) +
+  plottheme
+
+
+daily %>% filter(`Overseas travel` == "No") %>% 
+  count(`Date notified of potential case`, DHB, sort = T) %>% 
+  ggplot(., aes(x = `Date notified of potential case`, y = n, fill = DHB)) +
+  geom_col() +
+  #geom_point() +
+  facet_wrap(~DHB)
+
+daily %>% #filter(`Overseas travel` == "No") %>% 
+  count(`Date notified of potential case`, DHB, sort = T) %>%
+  #tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
+  #                                                      max(`Date notified of potential case`), by="day")) %>%
+  #mutate(n = ifelse(is.na(n), 0, n)) %>% 
+  ggplot(., aes(x = `Date notified of potential case`, y = n, fill = DHB)) +
+  geom_col() +
+  #geom_point() +
+  facet_wrap(~DHB)
 ```
 
 
+
+# Plot for Number of tests
 ```{r}
-theurl <- "https://www.health.govt.nz/system/files/documents/pages/covid-cases-15aug20.xlsx"
-webpage <- getURL(theurl)
-webpage <- readLines(tc <- textConnection(webpage)); close(tc)
+ggplot(data = testnumber, aes(x = Date, y = `Tests per day`)) +
+  geom_line(size = 1.5) +
+  plottheme +
+  scale_y_continuous(name="Number of tests per day", labels = scales::comma) +
+  labs(title = "Number of tests per day since 22 Jan",
+       caption = captionline) +
+  theme(axis.title.x=element_blank())
+```
+```{r}
+testnumber
+time <- 1:nrow(testnumber)
+lm(testnumber$`Total tests (cumulative)`~time) %>% 
+  summary()
 
-pagetree <- htmlTreeParse(webpage, error=function(...){}, useInternalNodes = TRUE)
+ggplot(data = testnumber, aes(x = Date, y = `Total tests (cumulative)`)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = stats::lm) +
+  plottheme +
+  scale_y_continuous(name="Total number of tests", labels = scales::comma) +
+  labs(title = "Total number of tests since 22 Jan",
+       caption = captionline) +
+  theme(axis.title.x=element_blank())
+```
 
-# Extract table header and contents
-tablehead <- xpathSApply(pagetree, "//*/table[@class='wikitable sortable']/tr/th", xmlValue)
-results <- xpathSApply(pagetree, "//*/table[@class='wikitable sortable']/tr/td", xmlValue)
+# Testing rate data
+```{r}
+testingrate[[1]] %>% filter(!DHB %in% c("Total", "Unknown")) %>%
+  mutate(`Test rate per 1,000 people` = as.numeric(`Test rate per 1,000 people`)) %>% 
+  mutate(DHB = fct_reorder(DHB, `Test rate per 1,000 people`)) %>% 
+  ggplot(., aes(x = DHB, y = `Test rate per 1,000 people`)) +
+  geom_col() +
+  coord_flip() +
+  plottheme +
+  labs(title = "Test rate per 1,000 people by DHB",
+       caption = captionline) +
+  theme(axis.title.y=element_blank())
 
-# Convert character vector to dataframe
-content <- as.data.frame(matrix(results, ncol = 8, byrow = TRUE))
+testingrate[[1]] %>% filter(!DHB %in% c("Total", "Unknown")) %>%
+  mutate(`Positive %` = as.numeric(gsub("%", "", `Positive %`))) %>% 
+  mutate(DHB = fct_reorder(DHB, `Positive %`)) %>% 
+  ggplot(., aes(x = DHB, y = `Positive %`)) +
+  geom_col() +
+  coord_flip() +
+  plottheme +
+  labs(title = "Positive % by DHB",
+       y = "Positive Rate",
+       caption = paste0(captionline, "\n", testingratecaptions[[1]])) +
+  theme(axis.title.y=element_blank())
 
 
+testingrate[[2]] %>% filter(!Ethnicity %in% c("Total", "Unknown")) %>%
+  mutate(`Test rate per 1,000 people` = as.numeric(`Test rate per 1,000 people`)) %>% 
+  mutate(Ethnicity = fct_reorder(Ethnicity, `Test rate per 1,000 people`)) %>% 
+  ggplot(., aes(x = Ethnicity, y = `Test rate per 1,000 people`)) +
+  geom_col() +
+  coord_flip() +
+  plottheme +
+  labs(title = "Test rate per 1,000 people by Ethnicity",
+       caption = paste0(captionline, "\n", testingratecaptions[[2]])) +
+  theme(axis.title.y=element_blank())
 ```
 
