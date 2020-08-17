@@ -121,6 +121,30 @@ daily %>% #filter(`Overseas travel` == "No") %>%
   geom_col() +
   #geom_point() +
   facet_wrap(~DHB)
+unique(daily$`Age group`)
+daily %>% #filter(`Overseas travel` == "No") %>% 
+  count(`Date notified of potential case`, `Age group`, sort = T) %>%
+  mutate(`Age group` = factor(`Age group`, levels = c("<1",
+                                                      "1 to 4",
+                                                      "5 to 9",
+                                                      "10 to 14",
+                                                      "15 to 19",
+                                                      "20 to 29",
+                                                      "30 to 39",
+                                                      "40 to 49",
+                                                      "50 to 59",
+                                                      "60 to 69", 
+                                                      "70+"))) %>% 
+  #tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
+  #                                                      max(`Date notified of potential case`), by="day")) %>%
+  #mutate(n = ifelse(is.na(n), 0, n)) %>% 
+  ggplot(., aes(x = `Date notified of potential case`, y = n, fill = `Age group`)) +
+  geom_col() +
+  #geom_point() +
+  facet_wrap(~`Age group`) +
+  plottheme
+
+
 ```
 
 
