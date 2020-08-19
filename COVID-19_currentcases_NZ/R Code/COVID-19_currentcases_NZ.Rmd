@@ -20,11 +20,13 @@ library(XML)
 library(RCurl)
 library(rvest)
 library(magrittr)
+library(countrycode)
+library(gganimate)
 theme_set(theme_light())
 ```
 
 ```{r echo = F}
-plottheme <- theme(text=element_text(size=20))
+plottheme <- theme(text=element_text(size=30))
 captionline <- "Source: Ministry of Health"
 ```
 
@@ -52,13 +54,45 @@ Test breakdown is from
 
 ```{r}
 download.file(dailyurl, paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"), mode="wb")
-daily <- read_xlsx(paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"),
+daily <- read_xlsx(#paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"),
+  paste0(here(),"/Data/fulldata_2020-08-18", ".xlsx"),
                   sheet = excel_sheets(paste0(here(),"/Data/fulldata_",substr(Sys.time(), 1, 10), ".xlsx"))[1],
                   skip = 2) %>%
-  mutate(`Date notified of potential case` = as.Date(`Date notified of potential case`)) #%>% 
+  mutate(`Date notified of potential case` = as.Date(`Date notified of potential case`),
+         `Flight departure date` = as.Date(`Flight departure date`),
+         `Arrival date` = as.Date(`Arrival date`),
+         date_difference = `Date notified of potential case` - `Arrival date`,
+         DHB = ifelse(DHB == "Managed isolation & quarantine", "Managed isolation", DHB)) #%>% 
   #tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
   #                                                      max(`Date notified of potential case`), by="day"))
 
+dailyTotal <- daily %>% 
+    tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
+                                                                 max(`Date notified of potential case`), by="day")) %>% 
+    group_by(`Date notified of potential case`) %>% 
+    summarise(n = n()) %>% 
+  mutate(Overseas_Travel = "Total")
+dailyNoTravel <- daily %>% filter(`Overseas travel` == "No") %>%
+    tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
+                                                                 max(`Date notified of potential case`),
+                                                                 by="day")) %>% 
+    group_by(`Date notified of potential case`) %>% 
+    summarise(n = n()) %>% 
+  mutate(Overseas_Travel = "No")
+dailyYesTravel <- daily %>% filter(`Overseas travel` == "Yes") %>%
+    tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
+                                                                 max(`Date notified of potential case`),
+                                                                 by="day")) %>% 
+    group_by(`Date notified of potential case`) %>% 
+    summarise(n = n()) %>% 
+  mutate(Overseas_Travel = "Yes")
+newdaily <- rbind(dailyTotal, dailyYesTravel, dailyNoTravel) %>% 
+  mutate(Overseas_Travel = factor(Overseas_Travel, levels= c("Total", "Yes", "No")))
+
+dailyYesTravelLocation <- daily %>% filter(`Overseas travel` == "Yes",
+                                           !is.na(`Last location before return`)) %>%
+    group_by(`Last location before return`) %>% 
+    summarise(n = n())
 
 testnumber <- read_html(testurl) %>% 
   html_nodes(., "table") %>% 
@@ -76,24 +110,39 @@ testingratecaptions <- read_html(testingratesurl) %>%
 testingrate <- read_html(testingratesurl) %>% 
   html_nodes(., "table") %>% 
   html_table(., fill = TRUE)
+
+borderCloseDate <- as.Date("19-03-2020", "%d-%m-%Y")
+managedIsolationDate <- as.Date("10-04-2020", "%d-%m-%Y")
+
+#arrival <- read_xlsx(paste0(here(),"/Data/NZ-resident traveller arrivals by closest overseas port.xlsx"),
+#                  sheet = excel_sheets(paste0(here(),"/Data/NZ-resident traveller arrivals by closest overseas port.xlsx"))[1]) %>%
+#  mutate(Total = `2020M04`+`2020M05`+`2020M06`)
+#  mutate(Country = countrycode(., City, 'country.name'))
+#
+#world <- read_csv("https://covid.ourworldindata.org/data/owid-covid-data.csv")
+  
 ```
 
 # Plot for Positive Cases
 ```{r}
 daily %>% count(`Date notified of potential case`, sort = T)
 daily %>% count(`Date notified of potential case`, DHB, sort = T)
-daily %>% filter(`Overseas travel` == "No") %>% 
-  count(`Date notified of potential case`, DHB, sort = T) %>% View
 
-
-daily %>% 
-  tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
-                                                        max(`Date notified of potential case`), by="day")) %>% 
-  group_by(`Date notified of potential case`) %>% 
-  summarise(n = n()) %>% 
-  ggplot(., aes(x = `Date notified of potential case`, y = n)) +
-  geom_line(size = 1) +
-  plottheme
+ggplot(data = newdaily, aes(x = `Date notified of potential case`, y = n, colour = Overseas_Travel
+                            #, linetype = Overseas_Travel
+                            )) +
+  geom_line(size = 1.25) +
+  #scale_linetype_manual(values=c("solid", "dashed", "longdash")) +
+  #scale_colour_manual(values=c("black","red","blue")) +
+  scale_color_brewer(palette="Dark2") +
+  geom_vline(xintercept = borderCloseDate, size = 0.8, lty = "dashed", color = "darkred") +
+  geom_vline(xintercept = managedIsolationDate, size = 0.8, lty = "dashed", color = "darkblue") +
+  plottheme +
+  labs(title = "Daily positive cases",
+       caption = captionline,
+       y = "Number of cases per day",
+       color='Overseas Travel') +
+  theme(axis.title.x=element_blank())
 
 daily %>% 
   tidyr::complete(`Date notified of potential case` = seq.Date(min(`Date notified of potential case`),
@@ -101,16 +150,26 @@ daily %>%
   group_by(`Date notified of potential case`) %>% 
   summarise(n = n()) %>% 
   ggplot(., aes(x = `Date notified of potential case`, y = cumsum(n))) +
-  geom_line(size = 1) +
-  plottheme
+  geom_line(size = 1.25) +
+  plottheme +
+  labs(title = "Toal positive cases",
+       caption = captionline,
+       y = "Number of cases per day",
+       color='Overseas Travel') +
+  theme(axis.title.x=element_blank())
 
-
-daily %>% filter(`Overseas travel` == "No") %>% 
-  count(`Date notified of potential case`, DHB, sort = T) %>% 
-  ggplot(., aes(x = `Date notified of potential case`, y = n, fill = DHB)) +
+dailyYesTravelLocation %>% arrange(desc(n)) %>% 
+  head(10) %>% 
+  mutate(`Last location before return` = fct_reorder(`Last location before return`, n, .desc = F)) %>% 
+  ggplot(., aes(x = `Last location before return`, y = n)) +
   geom_col() +
-  #geom_point() +
-  facet_wrap(~DHB)
+  coord_flip() +
+  plottheme +
+  labs(title = "Toal positive cases by last location",
+       caption = captionline) +
+  theme(axis.title.x=element_blank())
+
+
 
 daily %>% #filter(`Overseas travel` == "No") %>% 
   count(`Date notified of potential case`, DHB, sort = T) %>%
@@ -120,15 +179,27 @@ daily %>% #filter(`Overseas travel` == "No") %>%
   ggplot(., aes(x = `Date notified of potential case`, y = n, fill = DHB)) +
   geom_col() +
   #geom_point() +
-  facet_wrap(~DHB)
-unique(daily$`Age group`)
+   labs(title = "Daily Positive cases by DHB",
+       caption = captionline,
+       y = "Number of cases per day") +
+  plottheme +
+  theme(axis.title.x=element_blank(),
+        legend.position = "none") +
+  scale_fill_manual(values = c("#771155", "#AA4488", "#CC99BB", "#114477", "#4477AA", "#77AADD", "#117777", "#44AAAA", "black", "#117744", "#44AA77", "#88CCAA", "#777711", "#AAAA44", "#DDDD77", "#774411", "#AA7744", "#DDAA77", "#771122", "#AA4455", "#DD7788")) +
+  geom_vline(xintercept = borderCloseDate, size = 0.5, lty = "dashed", color = "darkred") +
+  geom_vline(xintercept = managedIsolationDate, size = 0.5, lty = "dashed", color = "darkblue") +
+  facet_wrap(~DHB, labeller = label_wrap_gen(width=15), nrow = 5)
+
 daily %>% #filter(`Overseas travel` == "No") %>% 
   count(`Date notified of potential case`, `Age group`, sort = T) %>%
-  mutate(`Age group` = factor(`Age group`, levels = c("<1",
-                                                      "1 to 4",
+  mutate(`Age group` = case_when(`Age group` == "<1" ~ "0 to 4",
+                                 `Age group` == "1 to 4" ~ "0 to 4",
+                                 `Age group` == "10 to 14" ~ "10 to 19",
+                                 `Age group` == "15 to 19" ~ "10 to 19",
+                                 TRUE~ `Age group`)) %>% 
+  mutate(`Age group` = factor(`Age group`, levels = c("0 to 4",
                                                       "5 to 9",
-                                                      "10 to 14",
-                                                      "15 to 19",
+                                                      "10 to 19",
                                                       "20 to 29",
                                                       "30 to 39",
                                                       "40 to 49",
@@ -140,11 +211,101 @@ daily %>% #filter(`Overseas travel` == "No") %>%
   #mutate(n = ifelse(is.na(n), 0, n)) %>% 
   ggplot(., aes(x = `Date notified of potential case`, y = n, fill = `Age group`)) +
   geom_col() +
-  #geom_point() +
-  facet_wrap(~`Age group`) +
-  plottheme
+  scale_fill_brewer(palette="Paired") +
+  geom_vline(xintercept = borderCloseDate, size = 0.8, lty = "dashed", color = "darkred") +
+  geom_vline(xintercept = managedIsolationDate, size = 0.8, lty = "dashed", color = "darkblue") +
+  labs(title = "Daily Positive cases by age group",
+       caption = captionline,
+       y = "Number of cases per day") +
+  plottheme +
+  theme(axis.title.x=element_blank(),
+        legend.position = "none") +
+  facet_wrap(~`Age group`)
+
+daily %>% 
+  count(`Age group`, DHB, sort = T) %>% 
+  mutate(`Age group` = case_when(`Age group` == "<1" ~ "0 to 4",
+                                 `Age group` == "1 to 4" ~ "0 to 4",
+                                 `Age group` == "10 to 14" ~ "10 to 19",
+                                 `Age group` == "15 to 19" ~ "10 to 19",
+                                 TRUE~ `Age group`)) %>% 
+  mutate(`Age group` = factor(`Age group`, levels = c("0 to 4",
+                                                      "5 to 9",
+                                                      "10 to 19",
+                                                      "20 to 29",
+                                                      "30 to 39",
+                                                      "40 to 49",
+                                                      "50 to 59",
+                                                      "60 to 69", 
+                                                      "70+"))) %>% 
+  ggplot(., aes(x = `Age group`, y = n, fill = `DHB`)) +
+  geom_col() +
+  scale_fill_manual(values = c("#771155", "#AA4488", "#CC99BB", "#114477", "#4477AA", "#77AADD", "#117777", "#44AAAA", "black", "#117744", "#44AA77", "#88CCAA", "#777711", "#AAAA44", "#DDDD77", "#774411", "#AA7744", "#DDAA77", "#771122", "#AA4455", "#DD7788")) +
+  labs(title = "Daily Positive cases by age group and DHB",
+       caption = captionline,
+       y = "Number of cases per day") +
+  plottheme +
+  coord_flip()
 
 
+daily %>% filter(`Date notified of potential case` >= as.Date("2020-06-17")) %>% 
+  count(`Age group`, DHB, sort = T) %>% 
+  mutate(`Age group` = case_when(`Age group` == "<1" ~ "0 to 4",
+                                 `Age group` == "1 to 4" ~ "0 to 4",
+                                 `Age group` == "10 to 14" ~ "10 to 19",
+                                 `Age group` == "15 to 19" ~ "10 to 19",
+                                 TRUE~ `Age group`)) %>% 
+  mutate(`Age group` = factor(`Age group`, levels = c("0 to 4",
+                                                      "5 to 9",
+                                                      "10 to 19",
+                                                      "20 to 29",
+                                                      "30 to 39",
+                                                      "40 to 49",
+                                                      "50 to 59",
+                                                      "60 to 69", 
+                                                      "70+"))) %>% 
+  ggplot(., aes(x = `Age group`, y = n, fill = `DHB`)) +
+  geom_col() +
+  scale_fill_manual(values = c("#771155", "#AA4488", "#CC99BB", "#114477", "#4477AA", "#77AADD", "#117777", "#44AAAA", "black", "#117744", "#44AA77", "#88CCAA", "#777711", "#AAAA44", "#DDDD77", "#774411", "#AA7744", "#DDAA77", "#771122", "#AA4455", "#DD7788")) +
+  labs(title = "Daily Positive cases by age group and DHB",
+       caption = captionline,
+       y = "Number of cases per day") +
+  plottheme +
+  coord_flip()
+
+
+daily %>% filter(`Date notified of potential case` >= as.Date("2020-06-17"),
+                 DHB == "Managed isolation") %>% 
+  count(`Age group`, DHB, sort = T) %>% 
+  mutate(`Age group` = case_when(`Age group` == "<1" ~ "0 to 4",
+                                 `Age group` == "1 to 4" ~ "0 to 4",
+                                 `Age group` == "5 to 9" ~ "5 to 9",
+                                 `Age group` == "10 to 14" ~ "10 to 19",
+                                 `Age group` == "15 to 19" ~ "10 to 19",
+                                 TRUE~ `Age group`)) %>% 
+  mutate(`Age group` = factor(`Age group`, levels = c("0 to 4",
+                                                      "5 to 9",
+                                                      "10 to 19",
+                                                      "20 to 29",
+                                                      "30 to 39",
+                                                      "40 to 49",
+                                                      "50 to 59",
+                                                      "60 to 69", 
+                                                      "70+"))) %>% 
+  ggplot(., aes(x = `Age group`, y = n)) +
+  geom_col() +
+  labs(title = "Daily Positive cases by age group in isolation",
+       caption = captionline,
+       y = "Number of cases per day") +
+  plottheme +
+  coord_flip()
+
+
+daily %>% filter(!is.na(date_difference) & date_difference<50) %>% 
+  ggplot(., aes(x = date_difference)) +
+  geom_histogram(binwidth = 1)
+
+daily %>% filter(!is.na(date_difference) & date_difference>30) %>% View
 ```
 
 
@@ -164,10 +325,10 @@ testnumber
 time <- 1:nrow(testnumber)
 lm(testnumber$`Total tests (cumulative)`~time) %>% 
   summary()
-
+?geom_smooth
 ggplot(data = testnumber, aes(x = Date, y = `Total tests (cumulative)`)) +
   geom_line(size = 1.5) +
-  geom_smooth(method = stats::lm) +
+  geom_smooth(method = stats::loess) +
   plottheme +
   scale_y_continuous(name="Total number of tests", labels = scales::comma) +
   labs(title = "Total number of tests since 22 Jan",
@@ -213,3 +374,64 @@ testingrate[[2]] %>% filter(!Ethnicity %in% c("Total", "Unknown")) %>%
   theme(axis.title.y=element_blank())
 ```
 
+```{r}
+world <- read_csv("https://covid.ourworldindata.org/data/owid-covid-data.csv") %>%
+  select(continent, location, date, total_cases) %>%
+  filter(!location %in% c("World", "International"))
+ 
+ 
+worldFormatted <- world %>%
+  group_by(date) %>%
+  # The * 1 makes it possible to have non-integer ranks while sliding
+  mutate(rank = rank(-total_cases),
+         #Value_rel = total_cases/total_cases[rank==1],
+         #Value_lbl = paste0(" ",round(total_cases/1e9))
+  ) %>%
+  group_by(location) %>%
+  filter(rank <= 20) %>%
+  ungroup()
+ 
+staticplot =
+ggplot(worldFormatted, aes(rank, group = location)) +
+  geom_tile(aes(y = total_cases/2,
+                height = total_cases,
+                width = 0.9,
+                fill = as.factor(location), color = as.factor(location)), alpha = 0.8, colour = NA) +
+  geom_text(aes(y = 0, colour = 'black', label = paste(location, " ")), colour = 'black', vjust = 0.2, hjust = 1, size = 10) +
+  geom_text(aes(y = round(total_cases,0), label = scales::comma(round(total_cases), accuracy=1), colour = 'black'), colour = 'black', hjust = 0, size = 10) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_reverse() +
+  guides(color = FALSE, fill = FALSE) +
+  coord_flip(clip = "off", expand = FALSE) +
+  theme(axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.grid.major.x = element_line( size=.1, color="grey" ),
+        panel.grid.minor.x = element_line( size=.1, color="grey" ),
+        plot.title=element_text(size=25, hjust=0.5, face="bold", colour="grey", vjust=-1),
+        plot.subtitle=element_text(size=18, hjust=0.5, face="italic", color="grey"),
+        plot.caption =element_text(size=8, hjust=0.5, face="italic", color="grey"),
+        plot.background=element_blank(),
+        plot.margin = margin(3, 8, 3, 5, "cm"))
+ 
+anim = staticplot + transition_states(date, transition_length = 4, state_length = 1) +
+  view_follow(fixed_x = TRUE)  +
+  labs(title = 'Total Cases : {closest_state}', 
+       subtitle  =  "Top 20 Countries",
+       caption  = "Data Source: Our World in Data")
+ 
+ 
+# For GIF
+animate(anim, 900, fps = 30,  width = 1300, height = 1000,
+        renderer = gifski_renderer("gganim.gif"))
+
+
+```
